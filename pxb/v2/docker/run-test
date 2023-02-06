@@ -20,6 +20,12 @@ if [[ ${WITH_AZURITE} == "ON" ]]; then
     AZURITE_DOCKER_FLAG="--network bridge-azurite"
 fi
 
+export WITH_XBCLOUD_TESTS="ON"
+if [[ ${WITH_XBCLOUD_TESTS} == "ON" ]]; then
+    docker run -d --security-opt seccomp=unconfined --cap-add=NET_ADMIN --rm -p 9000:9000 --rm -p 9001:9001 --name s3 altmannmarcelo/minio:latest
+
+    XBCLOUD_CREDENTIALS="--storage=s3 --s3-endpoint='http://127.0.0.1:9000' --s3-access-key=admin --s3-secret-key=password --s3-bucket=newbucket"
+fi
 
 XTRABACKUP_TARGET_VERSION=$(set | grep -i $XTRABACKUP_TARGET'_VERSION' | awk -F '=' '{print $2}')
 
@@ -34,12 +40,13 @@ docker run --rm \
     set -o xtrace
 
     export CMAKE_BUILD_TYPE='${CMAKE_BUILD_TYPE}'
-    export XBTR_ARGS='${XBTR_ARGS}'
+    export XBTR_ARGS='-t t/xbcloud.sh'
     export XTRABACKUP_TARGET='${XTRABACKUP_TARGET}'
     export XTRABACKUP_TARGET_VERSION='${XTRABACKUP_TARGET_VERSION}'
     export BOOTSTRAP_URL='${BOOTSTRAP_URL}'
     export WITH_AZURITE='${WITH_AZURITE}'
     export LANG=en_AU.UTF-8
+    export XBCLOUD_CREDENTIALS='${XBCLOUD_CREDENTIALS}'
 
     mkdir /tmp/results
     cp /tmp/pxb/results/*.tar.gz /tmp/results
