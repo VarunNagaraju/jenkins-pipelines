@@ -30,7 +30,7 @@ fi
 XTRABACKUP_TARGET_VERSION=$(set | grep -i $XTRABACKUP_TARGET'_VERSION' | awk -F '=' '{print $2}')
 
 docker run --rm \
-    --security-opt seccomp=unconfined \
+    --security-opt seccomp=unconfined --net host\
     --mount type=bind,source=${ROOT_DIR},destination=/tmp/pxb \
     --mount type=bind,source=${SCRIPTS_DIR},destination=/tmp/scripts \
     ${AZURITE_DOCKER_FLAG} \
