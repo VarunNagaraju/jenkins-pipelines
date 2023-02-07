@@ -40,7 +40,7 @@ docker run --rm \
     set -o xtrace
 
     export CMAKE_BUILD_TYPE='${CMAKE_BUILD_TYPE}'
-    export XBTR_ARGS='-t t/xbcloud.sh'
+    export XBTR_ARGS='${XBTR_ARGS}'
     export XTRABACKUP_TARGET='${XTRABACKUP_TARGET}'
     export XTRABACKUP_TARGET_VERSION='${XTRABACKUP_TARGET_VERSION}'
     export BOOTSTRAP_URL='${BOOTSTRAP_URL}'
