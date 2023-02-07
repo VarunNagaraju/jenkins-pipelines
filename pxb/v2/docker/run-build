@@ -30,6 +30,10 @@ docker run --rm \
     mkdir /tmp/results
     cp -r /tmp/source_downloads /tmp/results/source_downloads
     sudo chown -R mysql:mysql /tmp/pxb
+    cd /tmp/pxb
+    ./storage/innobase/xtrabackup/test/bootstrap.sh --pxb-type=RelWithDebInfo --type=xtradb80 --version=8.0.30-22
+    ./server/bin/mysqld -V
+    cd ../../
     bash -x /tmp/scripts/build-binary /tmp/results /tmp/pxb
 
     sudo rm -rf /tmp/pxb/results
