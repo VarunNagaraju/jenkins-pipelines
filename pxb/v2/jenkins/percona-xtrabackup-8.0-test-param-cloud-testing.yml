@@ -43,6 +43,18 @@
         - docker-32gb
         - docker
         description: Run build on specified instance type. 
+    - bool:
+        name: WITH_XBCLOUD_TESTS
+        default: true
+        description: "Run xbcloud tests"
+    - bool:
+        name: WITH_VAULT_TESTS
+        default: true
+        description: "Run vault tests"
+    - bool:
+        name: WITH_KMIP_TESTS
+        default: true
+        description: "Run kmip tests"
     axes:
     - axis:
         name: CMAKE_BUILD_TYPE
@@ -70,6 +82,9 @@
           DOCKER_OS=${DOCKER_OS}
           CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
           XTRABACKUP_TARGET=${XTRABACKUP_TARGET}
+          WITH_XBCLOUD_TESTS=${WITH_XBCLOUD_TESTS}
+          WITH_VAULT_TESTS=${WITH_VAULT_TESTS}
+          WITH_KMIP_TESTS=${WITH_KMIP_TESTS}
         block: true
         block-thresholds:
           build-step-failure-threshold: FAILURE

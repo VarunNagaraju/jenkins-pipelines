@@ -34,6 +34,11 @@ if [[ -f /opt/rh/devtoolset-7/enable ]]; then
   source /opt/rh/devtoolset-7/enable
 fi
 
+#Ubuntu
+if [ -f /usr/bin/apt ]; then
+  sudo apt-get install -y uuid-runtime
+fi
+
 status=0
 #
 # Running XBTR test cases
@@ -92,7 +97,7 @@ else
       sudo wget -O bootstrap.sh ${BOOTSTRAP_URL}
       sudo chmod +x bootstrap.sh
     fi
-    ./bootstrap.sh --pxb-type=${CMAKE_BUILD_TYPE} --type=${XTRABACKUP_TARGET} --version=${XTRABACKUP_TARGET_VERSION}
+    bash -x bootstrap.sh --pxb-type=${CMAKE_BUILD_TYPE} --type=${XTRABACKUP_TARGET} --version=${XTRABACKUP_TARGET_VERSION}
 fi
 if [[ ${CMAKE_BUILD_TYPE} == "Debug" ]]; then
     if [[ ${XTRABACKUP_TARGET} == "innodb80" ]] || [[ ${XTRABACKUP_TARGET} == "innodb57" ]]; then

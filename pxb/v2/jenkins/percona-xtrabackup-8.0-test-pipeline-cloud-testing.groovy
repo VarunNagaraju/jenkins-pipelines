@@ -36,6 +36,18 @@ pipeline {
             choices: 'docker-32gb\ndocker',
             description: 'Run build on specified instance type',
             name: 'LABEL')
+        booleanParam(
+            name: 'WITH_XBCLOUD_TESTS',
+            defaultValue: true,
+            description: 'Run xbcloud tests')
+        booleanParam(
+            name: 'WITH_VAULT_TESTS',
+            defaultValue: true,
+            description: 'Run vault tests')
+        booleanParam(
+            name: 'WITH_XBCLOUD_TESTS',
+            defaultValue: true,
+            description: 'Run xbcloud tests')
     }
     agent {
         label 'micro-amazon'
