@@ -66,7 +66,6 @@
         type: user-defined
         name: DOCKER_OS
         values:
-        - ubuntu:bionic
         - ubuntu:focal
     - axis:
         name: XTRABACKUP_TARGET

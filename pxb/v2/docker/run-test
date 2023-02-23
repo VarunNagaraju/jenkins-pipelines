@@ -11,44 +11,57 @@ if [[ ${SOURCE_IMAGE} == 'asan' ]]; then
     SOURCE_IMAGE='centos:7'
 fi
 
-if [[ ${WITH_AZURITE} == "ON" ]]; then
-    if [[ $(docker network list | grep bridge-azurite) != *bridge-azurite* ]]; then
-        docker network create bridge-azurite
-    fi
-    docker run -d -p 10000:10000 -p 10001:10001 --name azurite --network bridge-azurite mcr.microsoft.com/azure-storage/azurite:3.14.0
+if [[ ${WITH_AZURITE} == "ON" || ${WITH_XBCLOUD_TESTS} == "true" || ${WITH_VAULT_TESTS} == "true" || ${WITH_KMIP_TESTS} == "true" ]]; then
+    DOCKER_NETWORK_FLAG="--network pxb_network"
+fi
 
-    AZURITE_DOCKER_FLAG="--network bridge-azurite"
+if [[ ${WITH_AZURITE} == "ON" ]]; then
+    if [[ $(docker network list | grep pxb_network) != *pxb_network* ]]; then
+        docker network create pxb_network
+    fi
+    docker run -d -p 10000:10000 -p 10001:10001 --name azurite ${DOCKER_NETWORK_FLAG} mcr.microsoft.com/azure-storage/azurite:3.14.0
 fi
 
 if [[ ${WITH_XBCLOUD_TESTS} == "true" ]]; then
-    docker run -d --security-opt seccomp=unconfined --cap-add=NET_ADMIN --rm -p 9000:9000 --rm -p 9001:9001 --name s3 altmannmarcelo/minio:latest
-
-    XBCLOUD_CREDENTIALS="--storage=s3 --s3-endpoint='http://127.0.0.1:9000' --s3-access-key=admin --s3-secret-key=password --s3-bucket=newbucket"
+    if [[ $(docker network list | grep pxb_network) != *pxb_network* ]]; then
+        docker network create pxb_network
+    fi
+    docker run -d --security-opt seccomp=unconfined --cap-add=NET_ADMIN --rm -p 9000:9000 --rm -p 9001:9001 ${DOCKER_NETWORK_FLAG} --name s3 altmannmarcelo/minio:latest
+    export S3_SERVER_IP=$(docker inspect s3 | egrep "\"IPAddress\": \"([0-9]{1,3}\.){3}[0-9]{1,3}" | awk -F'"' '{print $4}')
+    export XBCLOUD_CREDENTIALS="--storage=s3 --s3-endpoint='http://${S3_SERVER_IP}:9000' --s3-access-key=admin --s3-secret-key=password --s3-bucket=newbucket"
 fi
 
 if [[ ${WITH_VAULT_TESTS} == "true" ]]; then
-    docker run -d --security-opt seccomp=unconfined --cap-add=NET_ADMIN --rm -p 8200:8200 --name vault altmannmarcelo/vault:latest
-    docker cp vault:/opt/vault/tls/tls.crt $ROOT_DIR/vault.crt
+    if [[ $(docker network list | grep pxb_network) != *pxb_network* ]]; then
+        docker network create pxb_network
+    fi
+    docker run -d --security-opt seccomp=unconfined --cap-add=NET_ADMIN --rm -p 8200:8200 ${DOCKER_NETWORK_FLAG} --name vault altmannmarcelo/vault:latest
+    docker cp vault:/opt/vault/tls/tls.crt ${ROOT_DIR}/vault.crt
     sleep 10
-    docker logs vault
+
+    export VAULT_SERVER_IP=$(docker inspect vault | egrep "\"IPAddress\": \"([0-9]{1,3}\.){3}[0-9]{1,3}" | awk -F'"' '{print $4}')
     export TOKEN=$(docker logs vault | grep 'export VAULT_TOKEN' | awk -F'=' '{print $2}')
 fi
 
 if [[ ${WITH_KMIP_TESTS} == "true" ]]; then
-    docker run -d --security-opt seccomp=unconfined --cap-add=NET_ADMIN --rm -p 5696:5696 --name kmip altmannmarcelo/kmip:latest
+    if [[ $(docker network list | grep pxb_network) != *pxb_network* ]]; then
+        docker network create pxb_network
+    fi
+    docker run -d --security-opt seccomp=unconfined --cap-add=NET_ADMIN --rm -p 5696:5696 ${DOCKER_NETWORK_FLAG} --name kmip altmannmarcelo/kmip:latest
 
-    docker cp kmip:/opt/certs/root_certificate.pem $ROOT_DIR
-    docker cp kmip:/opt/certs/client_key_jane_doe.pem $ROOT_DIR
-    docker cp kmip:/opt/certs/client_certificate_jane_doe.pem $ROOT_DIR
+    docker cp kmip:/opt/certs/root_certificate.pem ${ROOT_DIR}
+    docker cp kmip:/opt/certs/client_key_jane_doe.pem ${ROOT_DIR}
+    docker cp kmip:/opt/certs/client_certificate_jane_doe.pem ${ROOT_DIR}
+    export KMIP_SERVER_IP=$(docker inspect kmip | egrep "\"IPAddress\": \"([0-9]{1,3}\.){3}[0-9]{1,3}" | awk -F'"' '{print $4}')
 fi
 
 XTRABACKUP_TARGET_VERSION=$(set | grep -i $XTRABACKUP_TARGET'_VERSION' | awk -F '=' '{print $2}')
 
 docker run --rm \
-    --security-opt seccomp=unconfined --net host \
+    --security-opt seccomp=unconfined \
     --mount type=bind,source=${ROOT_DIR},destination=/tmp/pxb \
     --mount type=bind,source=${SCRIPTS_DIR},destination=/tmp/scripts \
-    ${AZURITE_DOCKER_FLAG} \
+    ${DOCKER_NETWORK_FLAG} \
     public.ecr.aws/e7j3v3n0/pxc-build:${SOURCE_IMAGE//[:\/]/-} \
     sh -c "
     set -o errexit
@@ -62,13 +75,15 @@ docker run --rm \
     export WITH_AZURITE='${WITH_AZURITE}'
     export LANG=en_AU.UTF-8
     export XBCLOUD_CREDENTIALS='${XBCLOUD_CREDENTIALS}'
-    export VAULT_URL=https://127.0.0.1:8200
+    export VAULT_URL=https://${VAULT_SERVER_IP}:8200
     export VAULT_CACERT=/tmp/pxb/vault.crt
     export VAULT_CA=/tmp/pxb/vault.crt
-    export VAULT_TOKEN=${TOKEN}
+    export VAULT_TOKEN='${TOKEN}'
     export KMIP_CLIENT_CA=/tmp/pxb/client_certificate_jane_doe.pem
     export KMIP_CLIENT_KEY=/tmp/pxb/client_key_jane_doe.pem
     export KMIP_SERVER_CA=/tmp/pxb/root_certificate.pem
+    export KMIP_SERVER_ADDR='${KMIP_SERVER_IP}'
+    export KMIP_SERVER_PORT=5696
 
     mkdir /tmp/results
     cp /tmp/pxb/results/*.tar.gz /tmp/results
