@@ -27,6 +27,14 @@ EOF
   exit 0
 }
 
+if [ ! -z "${VAULT_IP}" ]; then
+    echo "${VAULT_IP} local.vault.com" | sudo tee -a /etc/hosts
+fi
+
+if [ ! -z "${KMIP_SERVER_IP}" ]; then
+    echo "${KMIP_SERVER_IP} local.kmip.com" | sudo tee -a /etc/hosts
+fi
+
 tar -C ${WORKDIR_ABS}/PXB --strip-components=1 -zxpf $(ls $WORKDIR_ABS/*.tar.gz | head -1)
 
 # CentOS 7
