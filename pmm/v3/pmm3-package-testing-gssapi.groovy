@@ -41,9 +41,9 @@ void run_package_tests(String GIT_BRANCH, String TESTS, String INSTALL_REPO, LIN
     git poll: false, branch: GIT_BRANCH, url: 'https://github.com/Percona-QA/package-testing'
 
     if (LINUX_VERSION == "ol8") {
-        export TARBALL = env.TARBALL_OL8
+        env.TARBALL = env.TARBALL_OL8
     } else if (LINUX_VERSION == "ol9") {
-        export TARBALL = env.TARBALL_OL9
+        env.TARBALL = env.TARBALL_OL9
     }
 
     sh '''
@@ -87,7 +87,7 @@ pipeline {
             name: 'PMM_VERSION',
             trim: true)
         string(
-            defaultValue: 'pmm3-client_integration',
+            defaultValue: 'pmm3-client_integration_tarball_gssapi',
             description: 'Name of Playbook? ex: pmm3-client_integration, pmm3-client_integration_custom_path',
             name: 'TESTS',
             trim: true)
