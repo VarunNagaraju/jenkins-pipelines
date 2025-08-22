@@ -40,9 +40,9 @@ void run_package_tests(String GIT_BRANCH, String TESTS, String INSTALL_REPO, LIN
     deleteDir()
     git poll: false, branch: GIT_BRANCH, url: 'https://github.com/Percona-QA/package-testing'
 
-    if (LINUX_VERSION = "ol8") {
+    if (LINUX_VERSION == "ol8") {
         export TARBALL = env.TARBALL_OL8
-    } else if (LINUX_VERSION = "ol9") {
+    } else if (LINUX_VERSION == "ol9") {
         export TARBALL = env.TARBALL_OL9
     }
 
