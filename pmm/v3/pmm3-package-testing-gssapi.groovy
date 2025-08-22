@@ -48,7 +48,6 @@ void run_package_tests(String GIT_BRANCH, String TESTS, String INSTALL_REPO, LIN
 
     sh '''
         export install_repo=\${INSTALL_REPO}
-        if
         export TARBALL_LINK=\${TARBALL}
         git clone https://github.com/Percona-QA/ppg-testing
         ansible-playbook \
