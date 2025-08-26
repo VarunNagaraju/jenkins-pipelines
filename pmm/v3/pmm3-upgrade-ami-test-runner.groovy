@@ -13,42 +13,85 @@ void checkClientBeforeUpgrade(String PMM_SERVER_VERSION, String CLIENT_VERSION) 
     env.PMM_VERSION = PMM_VERSION;
     if (PMM_VERSION == '3-dev-latest') {
         sh '''
-            sudo bash -c "
-                sudo su
-                GET_PMM_CLIENT_VERSION=$(wget -q https://raw.githubusercontent.com/Percona-Lab/pmm-submodules/v3/VERSION -O -)
-                sudo chmod 755 /srv/pmm-qa/pmm-tests/check_client_upgrade.py
-                python3 /srv/pmm-qa/pmm-tests/check_client_upgrade.py ${GET_PMM_CLIENT_VERSION}
-            "
+            GET_PMM_CLIENT_VERSION=$(wget -q https://raw.githubusercontent.com/Percona-Lab/pmm-submodules/v3/VERSION -O -)
+            sudo chmod 755 /srv/pmm-qa/pmm-tests/check_client_upgrade.py
+            python3 /srv/pmm-qa/pmm-tests/check_client_upgrade.py ${GET_PMM_CLIENT_VERSION}
         '''
     } else if (PMM_VERSION == 'pmm3-rc') {
         sh '''
-            sudo bash -c "
-                sudo su
-                GET_PMM_CLIENT_VERSION=$(wget -q "https://registry.hub.docker.com/v2/repositories/perconalab/pmm-client/tags?page_size=25&name=rc" -O - | jq -r .results[].name  | grep 3.*.*-rc$ | sort -V | tail -n1)
-                sudo chmod 755 /srv/pmm-qa/pmm-tests/check_client_upgrade.py
-                python3 /srv/pmm-qa/pmm-tests/check_client_upgrade.py ${GET_PMM_CLIENT_VERSION}
-            "
+            GET_PMM_CLIENT_VERSION=$(wget -q "https://registry.hub.docker.com/v2/repositories/perconalab/pmm-client/tags?page_size=25&name=rc" -O - | jq -r .results[].name  | grep 3.*.*-rc$ | sort -V | tail -n1)
+            sudo chmod 755 /srv/pmm-qa/pmm-tests/check_client_upgrade.py
+            python3 /srv/pmm-qa/pmm-tests/check_client_upgrade.py ${GET_PMM_CLIENT_VERSION}
         '''
     } else {
         sh '''
-            sudo bash -c "
-                sudo su
-                sudo chmod 755 /srv/pmm-qa/pmm-tests/check_client_upgrade.py
-                python3 /srv/pmm-qa/pmm-tests/check_client_upgrade.py ${PMM_VERSION}
-            "
+            sudo chmod 755 /srv/pmm-qa/pmm-tests/check_client_upgrade.py
+            python3 /srv/pmm-qa/pmm-tests/check_client_upgrade.py ${PMM_VERSION}
         '''
     }
 }
 
+void runAMIStagingStart(String AMI_ID, PMM_QA_GIT_BRANCH) {
+  amiStagingJob = build job: 'pmm3-ami-staging-start', parameters: [
+        string(name: 'AMI_ID', value: AMI_ID),
+        string(name: 'PMM_QA_GIT_BRANCH', value: PMM_QA_GIT_BRANCH),
+    ]
+  env.AMI_INSTANCE_ID = amiStagingJob.buildVariables.INSTANCE_ID
+  env.SERVER_IP = amiStagingJob.buildVariables.PUBLIC_IP
+  env.AMI_INSTANCE_IP = amiStagingJob.buildVariables.PUBLIC_IP
+  env.ADMIN_PASSWORD = amiStagingJob.buildVariables.INSTANCE_ID
+  env.VM_IP = amiStagingJob.buildVariables.PUBLIC_IP
+  env.VM_NAME = amiStagingJob.buildVariables.INSTANCE_ID
+  env.PMM_URL = "https://admin:${ADMIN_PASSWORD}@${AMI_INSTANCE_IP}"
+  env.PMM_UI_URL = "https://${AMI_INSTANCE_IP}/"
+  withCredentials([sshUserPrivateKey(credentialsId: 'aws-jenkins-admin', keyFileVariable: 'KEY_PATH', passphraseVariable: '', usernameVariable: 'USER')]) {
+    sh """
+        ssh -i "${KEY_PATH}" -o ConnectTimeout=1 -o StrictHostKeyChecking=no admin@${AMI_INSTANCE_IP} 'bash -c "
+            sudo docker network create --driver=bridge pmm-qa || true
+            echo \\"PMM_DEBUG=1\\" >> /home/admin/.config/systemd/user/pmm-server.env
+            echo \\"PMM_ENABLE_TELEMETRY=0\\" >> /home/admin/.config/systemd/user/pmm-server.env
+            echo \\"PMM_DEV_PERCONA_PLATFORM_PUBLIC_KEY=RWTg+ZmCCjt7O8eWeAmTLAqW+1ozUbpRSKSwNTmO+exlS5KEIPYWuYdX\\" >> /home/admin/.config/systemd/user/pmm-server.env
+            echo \\"PMM_DEV_PERCONA_PLATFORM_ADDRESS=https://check-dev.percona.com\\" >> /home/admin/.config/systemd/user/pmm-server.env
+            echo \\"PMM_DEV_UPDATE_DOCKER_IMAGE=$DOCKER_TAG_UPGRADE\\" >> /home/admin/.config/systemd/user/pmm-server.env
+            cat /home/admin/.config/systemd/user/pmm-server.env
 
-def versionsList = pmmVersion('v3')
-def latestVersion = versionsList[versionsList.size() - 1]
-def upgradeVersion = versionsList[versionsList.size() - 2]
-def upgradeDockerTag = 'perconalab/pmm-server:' + upgradeVersion
+            systemctl --user restart pmm-server
+            sudo git clone --single-branch --branch $QA_INTEGRATION_GIT_BRANCH https://github.com/Percona-Lab/qa-integration.git /srv/qa-integration
+            sudo git clone --single-branch --branch $PMM_UI_GIT_BRANCH https://github.com/percona/pmm-ui-tests.git /srv/pmm-ui-tests
+
+            cd /srv/qa-integration/pmm_qa
+                echo \\"Setting docker based PMM clients\\"
+                sudo dnf install -y python3.12
+                sudo mkdir -m 777 -p /tmp/backup_data
+                sudo python3 -m ensurepip --upgrade
+                sudo chown -R \$(whoami) /srv/qa-integration/
+                sudo chown -R \$(whoami) /srv/pmm-ui-tests/
+                python3.12 -m venv virtenv
+                source virtenv/bin/activate
+                pip3 install --upgrade pip
+                pip3 install -r requirements.txt
+                pip3 install setuptools
+
+                export AMI_UPGRADE_FLAG=\\"--database bucket,BUCKET_NAMES=\\"bcp\\"\\"
+
+                python pmm-framework.py --verbosity-level=1 \\\$AMI_UPGRADE_FLAG
+                docker network connect pmm-qa pmm-server
+                docker network connect pmm-qa watchtower
+        "'
+    """
+  }
+}
+
+def versionsList = pmmVersion('v3-ami')
+def amiVersions = versionsList.values()
+def versions = versionsList.keySet()
+def upgradeAmiVersion = amiVersions[amiVersions.size() - 1]
+def latestVersion = versions[versions.size() - 1]
+def upgradeVersion = versions[versions.size() - 2]
 
 pipeline {
     agent {
-        label 'min-noble-x64'
+        label 'agent-amd64-ol9'
     }
     environment {
         REMOTE_AWS_MYSQL_USER=credentials('pmm-dev-mysql-remote-user')
@@ -89,19 +132,19 @@ pipeline {
             description: 'Tag/Branch for UI Tests repository',
             name: 'PMM_UI_GIT_BRANCH')
         string(
-            defaultValue: upgradeDockerTag,
-            description: 'PMM Server Version to test for Upgrade',
-            name: 'DOCKER_TAG')
+            defaultValue: upgradeAmiVersion,
+            description: 'PMM Server Version to test for Upgrade (Docker Tag, AMI ID or OVF version)',
+            name: 'AMI_TAG')
         string(
             defaultValue: '',
             description: 'PMM Server Version to upgrade to, if empty docker tag will be used from version service.',
             name: 'DOCKER_TAG_UPGRADE')
         string(
-            defaultValue: upgradeVersion,
+            defaultValue: '3.0.0',
             description: 'PMM Client Version to test for Upgrade',
             name: 'CLIENT_VERSION')
         string(
-            defaultValue: latestVersion,
+            defaultValue: '3.1.0',
             description: 'latest PMM Server Version',
             name: 'PMM_SERVER_LATEST')
         choice(
@@ -136,10 +179,6 @@ pipeline {
             defaultValue: '8.0',
             description: "Which version of Percona Server for MongoDB",
             name: 'PSMDB_VERSION')
-        string(
-            defaultValue: 'admin',
-            description: "Password for PMM Server ",
-            name: 'ADMIN_PASSWORD')
     }
     options {
         skipDefaultCheckout()
@@ -150,7 +189,8 @@ pipeline {
             steps {
                 script {
                     env.ADMIN_PASSWORD = params.ADMIN_PASSWORD
-                    currentBuild.description = "${env.UPGRADE_FLAG} - Upgrade for PMM from ${env.DOCKER_TAG.split(":")[1]} to ${env.PMM_SERVER_LATEST}."
+                    env.PMM_UI_URL = params.PMM_UI_URL
+//                     currentBuild.description = "${env.UPGRADE_FLAG} - Upgrade for PMM from ${env.DOCKER_TAG.split(":")[1]} to ${env.PMM_SERVER_LATEST}."
                 }
                 git poll: false,
                     branch: PMM_UI_GIT_BRANCH,
@@ -158,26 +198,13 @@ pipeline {
 
                 sh '''
                     sudo mkdir -p /srv/pmm-qa || :
-                    cd /srv/pmm-qa
+                    cd  /srv/pmm-qa
                         sudo git clone --single-branch --branch ${PMM_QA_GIT_BRANCH} https://github.com/percona/pmm-qa.git .
+                    sudo mkdir -p /srv/qa-integration || true
+                    cd  /srv/qa-integration
+                        sudo git clone --single-branch --branch \${QA_INTEGRATION_GIT_BRANCH} https://github.com/Percona-Lab/qa-integration.git .
+                    sudo chmod -R 755 /srv/qa-integration
                     sudo ln -s /usr/bin/chromium-browser /usr/bin/chromium
-
-                    sudo apt-get update
-                    sudo apt-get install ca-certificates curl
-                    sudo install -m 0755 -d /etc/apt/keyrings
-                    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-                    sudo chmod a+r /etc/apt/keyrings/docker.asc
-
-                    # Add the repository to Apt sources:
-                    echo \
-                        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-                        $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
-                        sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-                    sudo apt-get update
-                    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin ansible
-                    sudo usermod -aG docker $(whoami)
-                    newgrp docker
-                    sudo chmod 666 /var/run/docker.sock
                 '''
             }
         }
@@ -220,117 +247,100 @@ pipeline {
                 }
             }
         }
-        stage('Start Server Instance') {
+        stage('Start AMI server Instance') {
             steps {
-                sh '''
-                    sudo mkdir -p /srv/qa-integration || true
-                    cd /srv/qa-integration
-                    sudo git clone --single-branch --branch \${QA_INTEGRATION_GIT_BRANCH} https://github.com/Percona-Lab/qa-integration.git .
-                    sudo chown $(id -u):$(id -u) -R /srv/qa-integration
-
-                    docker network create pmm-qa
-                    docker volume create pmm-volume
-
-                    docker run --detach --restart always \
-                        --network="pmm-qa" \
-                        -e WATCHTOWER_DEBUG=1 \
-                        -e WATCHTOWER_HTTP_API_TOKEN=testUpgradeToken \
-                        -e WATCHTOWER_HTTP_API_UPDATE=1 \
-                        --volume /var/run/docker.sock:/var/run/docker.sock \
-                        --name watchtower \
-                        perconalab/watchtower:latest
-
-                    sleep 10
-                    export DOCKER_TAG_UPGRADE=\${DOCKER_TAG_UPGRADE}
-
-                    if [[ -z \$DOCKER_TAG_UPGRADE ]]; then
-                        docker run --detach --restart always \
-                            --network="pmm-qa" \
-                            -e PMM_DEBUG=1 \
-                            -e PMM_WATCHTOWER_HOST=http://watchtower:8080 \
-                            -e PMM_WATCHTOWER_TOKEN=testUpgradeToken \
-                            -e PMM_DEV_PERCONA_PLATFORM_ADDRESS=https://check-dev.percona.com:443 \
-                            -e PERCONA_TEST_PLATFORM_ADDRESS=https://check-dev.percona.com:443 \
-                            -e PMM_DEV_PORTAL_URL=https://portal-dev.percona.com \
-                            -e PMM_DEV_PERCONA_PLATFORM_PUBLIC_KEY=RWTkF7Snv08FCboTne4djQfN5qbrLfAjb8SY3/wwEP+X5nUrkxCEvUDJ \
-                            -e PMM_ENABLE_UPDATES=1 \
-                            --publish 80:8080 --publish 443:8443 \
-                            --volume pmm-volume:/srv \
-                            --name pmm-server \
-                            ${DOCKER_TAG}
-                    else
-                        docker run --detach --restart always \
-                            --network="pmm-qa" \
-                            -e PMM_DEBUG=1 \
-                            -e PMM_WATCHTOWER_HOST=http://watchtower:8080 \
-                            -e PMM_WATCHTOWER_TOKEN=testUpgradeToken \
-                            -e PMM_DEV_PERCONA_PLATFORM_ADDRESS=https://check-dev.percona.com:443 \
-                            -e PERCONA_TEST_PLATFORM_ADDRESS=https://check-dev.percona.com:443 \
-                            -e PMM_DEV_PORTAL_URL=https://portal-dev.percona.com \
-                            -e PMM_DEV_PERCONA_PLATFORM_PUBLIC_KEY=RWTkF7Snv08FCboTne4djQfN5qbrLfAjb8SY3/wwEP+X5nUrkxCEvUDJ \
-                            -e PMM_ENABLE_UPDATES=1 \
-                            -e PMM_DEV_UPDATE_DOCKER_IMAGE=\${DOCKER_TAG_UPGRADE} \
-                            --publish 80:8080 --publish 443:8443 \
-                            --volume pmm-volume:/srv \
-                            --name pmm-server \
-                            \${DOCKER_TAG}
-                    fi
-                '''
-                script {
-                    env.SERVER_IP = "127.0.0.1"
-                    env.PMM_UI_URL = "http://${env.SERVER_IP}/"
-                    env.PMM_URL = "http://admin:admin@${env.SERVER_IP}"
-                }
-            }
-        }
-
-        stage('Setup PMM Client') {
-            steps {
-                sh """
-                    cd /srv/qa-integration/pmm_qa
-                    sudo chmod +x pmm3-client-setup.sh
-                    sudo ./pmm3-client-setup.sh --pmm_server_ip ${SERVER_IP} --client_version ${CLIENT_VERSION.trim()} --admin_password ${ADMIN_PASSWORD}
-                """
+                runAMIStagingStart(AMI_TAG, PMM_QA_GIT_BRANCH)
             }
         }
         stage('Install dependencies') {
             steps {
-                sh '''
-                    curl -sL https://deb.nodesource.com/setup_22.x -o nodesource_setup.sh
-                    sudo bash nodesource_setup.sh
-                    sudo apt install -y nodejs
-                    sudo apt-get install -y gettext
-                    npm ci
-                    npx playwright install
-                    sudo npx playwright install-deps
-                    envsubst < env.list > env.generated.list
-                    sed -i 's+http://localhost/+${PMM_UI_URL}/+g' pr.codecept.js
-                    export PWD=$(pwd)
-                    export CHROMIUM_PATH=/usr/bin/chromium
-                '''
+                withCredentials([sshUserPrivateKey(credentialsId: 'aws-jenkins-admin', keyFileVariable: 'KEY_PATH', passphraseVariable: '', usernameVariable: 'USER')]) {
+                    sh '''
+                        ssh -i "${KEY_PATH}" -o ConnectTimeout=1 -o StrictHostKeyChecking=no admin@${AMI_INSTANCE_IP} 'bash -c "
+                            curl -sL https://rpm.nodesource.com/setup_22.x -o nodesource_setup.sh
+                            sudo bash nodesource_setup.sh
+                            sudo dnf install -y nodejs
+                            cd /srv/pmm-ui-tests
+                            ls
+                            npm ci
+                            npx playwright install
+                            sudo sudo dnf install -y \
+                                nss \
+                                nspr \
+                                atk \
+                                at-spi2-atk \
+                                cups-libs \
+                                libdrm \
+                                at-spi2-atk \
+                                libX11 \
+                                libXcomposite \
+                                libXdamage \
+                                libXext \
+                                libXfixes \
+                                libXrandr \
+                                mesa-libgbm \
+                                libxcb \
+                                libxkbcommon \
+                                pango \
+                                cairo \
+                                alsa-lib
+
+                            envsubst < env.list > env.generated.list
+                            sed -i 's+http://localhost/+${PMM_UI_URL}/+g' pr.codecept.js
+                            export PWD=$(pwd)
+                            export CHROMIUM_PATH=/usr/bin/chromium
+                        "'
+                    '''
+                }
+            }
+        }
+        stage('Setup PMM Client') {
+            steps {
+                withCredentials([sshUserPrivateKey(credentialsId: 'aws-jenkins-admin', keyFileVariable: 'KEY_PATH', passphraseVariable: '', usernameVariable: 'USER')]) {
+                    sh """
+                        ssh -i "${KEY_PATH}" -o ConnectTimeout=1 -o StrictHostKeyChecking=no admin@${AMI_INSTANCE_IP} 'bash -c "
+                            sudo dnf install -y microdnf wget perl
+                            cd /srv/qa-integration/pmm_qa
+                            sudo chmod +x pmm3-client-setup-centos.sh
+                            docker exec pmm-server change-admin-password pmm3admin!
+                            sudo ./pmm3-client-setup-centos.sh --pmm_server_ip ${SERVER_IP} --client_version ${CLIENT_VERSION.trim()} --admin_password pmm3admin!
+                        "'
+                    """
+                }
+
             }
         }
         stage('Setup Databases for PMM-Server') {
             steps {
-                sh '''
-                    set -o errexit
-                    set -o xtrace
+                withCredentials([sshUserPrivateKey(credentialsId: 'aws-jenkins-admin', keyFileVariable: 'KEY_PATH', passphraseVariable: '', usernameVariable: 'USER')]) {
+                    sh """
+                        ssh -i "${KEY_PATH}" -o ConnectTimeout=1 -o StrictHostKeyChecking=no admin@${AMI_INSTANCE_IP} 'bash -c "
+                            set -o errexit
+                            set -o xtrace
 
-                    cd /srv/qa-integration/pmm_qa
-                    echo "Setting docker based PMM clients"
-                    sudo apt install -y python3.12 python3.12-venv
-                    mkdir -m 777 -p /tmp/backup_data
-                    python3 -m venv virtenv
-                    . virtenv/bin/activate
-                    pip install --upgrade pip
-                    pip install -r requirements.txt
-                    pip install setuptools
+                            cat /etc/containers/registries.conf
+                            sudo sed -i \\"/^\\[engine\\]/,/^\\[/{s/^short-name-mode *= *.*/short-name-mode = \\"permissive\\"/}\\" /etc/containers/registries.conf
+                            cat /etc/containers/registries.conf
 
-                    python3 pmm-framework.py --verbose \
-                        --client-version=\${CLIENT_VERSION} \
-                        --pmm-server-password=\${ADMIN_PASSWORD} \
-                        \${PMM_CLIENTS}
-                '''
+                            sudo chown -R \$(whoami):\$(whoami) /srv/qa-integration 1>/dev/null
+                            cd /srv/qa-integration/pmm_qa
+                            sudo dnf install -y python3.12 1>/dev/null
+                            mkdir -m 777 -p /tmp/backup_data 1>/dev/null
+                            python3 -m venv virtenv 1>/dev/null
+                            . virtenv/bin/activate 1>/dev/null
+                            pip install --upgrade pip 1>/dev/null
+                            pip install -r requirements.txt
+                            pip install setuptools
+
+                            python pmm-framework.py --verbose \
+                                --client-version=${CLIENT_VERSION} \
+                                --pmm-server-password=pmm3admin! \
+                                --pmm-server-ip=${SERVER_IP} \
+                                ${PMM_CLIENTS}
+                                docker ps -a
+                        "'
+                    """
+                }
             }
         }
         stage('Sanity check') {
@@ -356,8 +366,8 @@ pipeline {
                             docker cp pmm-custom-queries/postgresql/. $pgsqlContainerName:/usr/local/percona/pmm/collectors/custom-queries/postgresql/high-resolution/
                             echo 'node_role{role="my_monitored_server_1"} 1' > node_role.prom
                             sudo cp node_role.prom /usr/local/percona/pmm/collectors/textfile-collector/high-resolution/
-                            docker exec -u root $psContainerName pkill -f mysqld_exporter
-                            docker exec -u root $pgsqlContainerName pkill -f postgres_exporter
+                            docker exec $psContainerName pkill -f mysqld_exporter
+                            docker exec $pgsqlContainerName pkill -f postgres_exporter
                             docker exec $pgsqlContainerName pmm-admin list
                             docker exec $psContainerName pmm-admin list
                             sudo pkill -f node_exporter
@@ -380,18 +390,49 @@ pipeline {
                 sleep 60
             }
         }
-        stage('Check Packages before Upgrade') {
-            steps {
-                script {
-                    sh '''
-                        export PMM_VERSION=\$(curl --location --user admin:admin 'http://localhost/v1/server/version' | jq -r '.version' | awk -F "-" \'{print \$1}\')
-                        sudo chmod 755 /srv/pmm-qa/pmm-tests/check_upgrade.py
-                        sudo python3 /srv/pmm-qa/pmm-tests/check_upgrade.py -v \$PMM_VERSION -p pre
-                    '''
+        stage('Check PMM Server Packages before Upgrade') {
+            parallel {
+                stage('Check docker packages') {
+                    when {
+                        expression { env.SERVER_TYPE == "docker" }
+                    }
+                    steps {
+                        script {
+                            sh '''
+                                export PMM_VERSION=\$(curl --location -k --user admin:\${ADMIN_PASSWORD} http://localhost/v1/server/version | jq -r '.version' | awk -F "-" \'{print \$1}\')
+                                sudo chmod 755 /srv/pmm-qa/pmm-tests/check_upgrade.py
+                                python3 /srv/pmm-qa/pmm-tests/check_upgrade.py -v \$PMM_VERSION -p pre
+                            '''
+                        }
+                    }
+                }
+                stage('Check ami packages') {
+                    when {
+                        expression { env.SERVER_TYPE == "ami" }
+                    }
+                    steps {
+                        script {
+                             withCredentials([sshUserPrivateKey(credentialsId: 'aws-jenkins-admin', keyFileVariable: 'KEY_PATH', passphraseVariable: '', usernameVariable: 'USER')]) {
+                                sh '''
+                                    ssh -i "${KEY_PATH}" -o ConnectTimeout=1 -o StrictHostKeyChecking=no admin@${AMI_INSTANCE_IP} "bash -c '
+                                        export PMM_VERSION=$(curl --location -k --user admin:\${ADMIN_PASSWORD} \${PMM_UI_URL}v1/server/version | jq -r \'.version\')
+                                        echo \\${PMM_VERSION}
+                                        echo "PMM Version is: \\${PMM_VERSION}"
+                                        sudo chmod 755 /srv/pmm-qa/pmm-tests/check_upgrade.py
+                                        python3 /srv/pmm-qa/pmm-tests/check_upgrade.py -v \\$PMM_VERSION -p pre
+                                        '
+                                    "
+                                '''
+                             }
+                        }
+                    }
                 }
             }
         }
         stage('Check Client before Upgrade') {
+            when {
+                expression { env.SERVER_TYPE == "docker" }
+            }
             steps {
                 script {
                     checkClientBeforeUpgrade(PMM_SERVER_LATEST, CLIENT_VERSION)
@@ -483,14 +524,42 @@ pipeline {
                 }
             }
         }
-        stage('Check Packages after Upgrade') {
-            steps {
-                script {
-                    sh '''
-                        export PMM_VERSION=\$(curl --location --user admin:admin 'http://localhost/v1/server/version' | jq -r '.version' | awk -F "-" \'{print \$1}\')
-                        sudo chmod 755 /srv/pmm-qa/pmm-tests/check_upgrade.py
-                        python3 /srv/pmm-qa/pmm-tests/check_upgrade.py -v \$PMM_VERSION -p post
-                    '''
+        stage('Check PMM Server Packages after Upgrade') {
+            parallel {
+                stage('Check docker packages') {
+                    when {
+                        expression { env.SERVER_TYPE == "docker" }
+                    }
+                    steps {
+                        script {
+                            sh '''
+                                export PMM_VERSION=\$(curl --location --user admin:admin 'http://localhost/v1/server/version' | jq -r '.version' | awk -F "-" \'{print \$1}\')
+                                sudo chmod 755 /srv/pmm-qa/pmm-tests/check_upgrade.py
+                                python3 /srv/pmm-qa/pmm-tests/check_upgrade.py -v \$PMM_VERSION -p post
+                            '''
+                        }
+                    }
+                }
+                stage('Check ami packages') {
+                    when {
+                        expression { env.SERVER_TYPE == "ami" }
+                    }
+                    steps {
+                        script {
+                             withCredentials([sshUserPrivateKey(credentialsId: 'aws-jenkins-admin', keyFileVariable: 'KEY_PATH', passphraseVariable: '', usernameVariable: 'USER')]) {
+                                sh '''
+                                    ssh -i "${KEY_PATH}" -o ConnectTimeout=1 -o StrictHostKeyChecking=no admin@${AMI_INSTANCE_IP} "bash -c '
+                                        export PMM_VERSION=$(curl --location -k --user admin:\${ADMIN_PASSWORD} \${PMM_UI_URL}v1/server/version | jq -r \'.version\')
+                                        echo \\${PMM_VERSION}
+                                        echo "PMM Version is: \\${PMM_VERSION}"
+                                        sudo chmod 755 /srv/pmm-qa/pmm-tests/check_upgrade.py
+                                        python3 /srv/pmm-qa/pmm-tests/check_upgrade.py -v \\$PMM_VERSION -p post
+                                        '
+                                    "
+                                '''
+                             }
+                        }
+                    }
                 }
             }
         }
@@ -498,36 +567,19 @@ pipeline {
     post {
         always {
             sh '''
-                # fetch all the logs from PMM server
                 curl --insecure ${PMM_URL}/logs.zip --output logs.zip || true
-
-                # get logs from systemd pmm-agent.service
-                if [[ ${CLIENT_VERSION} != http* ]]; then
-                    journalctl -u pmm-agent.service >  ./pmm-agent.log
-                fi
-
-                # get logs from managed and update-perform
-                echo --- pmm-managed logs from pmm-server --- >> pmm-managed-full.log
-                docker exec pmm-server cat /srv/logs/pmm-managed.log >> pmm-managed-full.log || true
-                docker exec pmm-server cat /srv/logs/pmm-update-perform.log >> pmm-update-perform.log || true
-                echo --- pmm-update-perform logs from pmm-server --- >> pmm-update-perform.log
-                docker cp pmm-server:/srv/logs srv-logs
-                tar -zcvf srv-logs.tar.gz srv-logs
-
             '''
             script {
-                archiveArtifacts artifacts: 'pmm-managed-full.log'
-                archiveArtifacts artifacts: 'pmm-update-perform.log'
-                archiveArtifacts artifacts: 'pmm-agent.log'
-                archiveArtifacts artifacts: 'logs.zip'
-                archiveArtifacts artifacts: 'srv-logs.tar.gz'
+                amiStagingStopJob = build job: 'pmm3-ami-staging-stop', parameters: [
+                    string(name: 'AMI_ID', value: env.AMI_INSTANCE_ID),
+                ]
 
-                def PATH_TO_REPORT_RESULTS = 'tests/output/parallel_chunk*/*.xml'
-                try {
-                    junit PATH_TO_REPORT_RESULTS
-                } catch (err) {
-                    error "No test reports found at path: " + PATH_TO_REPORT_RESULTS
-                }
+//                 def PATH_TO_REPORT_RESULTS = 'tests/output/parallel_chunk*/*.xml'
+//                 try {
+//                     junit PATH_TO_REPORT_RESULTS
+//                 } catch (err) {
+//                     error "No test reports found at path: " + PATH_TO_REPORT_RESULTS
+//                 }
             }
         }
         failure {
