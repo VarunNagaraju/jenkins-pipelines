@@ -84,11 +84,13 @@ pipeline {
         success {
             slackNotify("#mongodb_autofeed", "#00FF00", "[${JOB_NAME}]: package tests for PLM with PSMDB Version(${psmdb_version}) finished succesfully - [${BUILD_URL}]")
         }
-        failure {
-            slackNotify("#mongodb_autofeed", "#FF0000", "[${JOB_NAME}]: package tests for PLM with PSMDB Version(${psmdb_version}) failed - [${BUILD_URL}]")
-        }
+//        failure {
+//            slackNotify("#mongodb_autofeed", "#FF0000", "[${JOB_NAME}]: package tests for PLM with PSMDB Version(${psmdb_version}) failed - [${BUILD_URL}]")
+//        }
         always {
             script {
+                println("SLEEPING")
+                sleep(3600000)
                 moleculeParallelPostDestroy(plmOperatingSystems(), moleculeDir)
             }
         }
