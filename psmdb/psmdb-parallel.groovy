@@ -108,6 +108,8 @@ pipeline {
 //        }
         always {
             script {
+                println("SLEEPING")
+                sleep time: 3600, unit: 'SECONDS'
                 moleculeParallelPostDestroy(pdmdbOperatingSystems(PSMDB_VERSION,PSMDB_VERSION,GATED_BUILD), moleculeDir)
             }
         }
